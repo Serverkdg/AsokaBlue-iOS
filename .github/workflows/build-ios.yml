@@ -47,9 +47,17 @@ jobs:
 
       - name: Package App for Appetize.io & Simulator
         run: |
-          cd build/Release-iphonesimulator
-          zip -r ../../AsokaBlue-Simulator.zip AsokaBlue.app
-          ls -lh ../../AsokaBlue-Simulator.zip
+          APP_PATH=$(find build -name "*.app" -type d | head -n 1)
+          echo "Found app at: $APP_PATH"
+          if [ -z "$APP_PATH" ]; then
+            echo "Error: No .app directory found in build!"
+            exit 1
+          fi
+          APP_DIR=$(dirname "$APP_PATH")
+          APP_NAME=$(basename "$APP_PATH")
+          cd "$APP_DIR"
+          zip -r "${GITHUB_WORKSPACE}/AsokaBlue-Simulator.zip" "$APP_NAME"
+          ls -lh "${GITHUB_WORKSPACE}/AsokaBlue-Simulator.zip"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
