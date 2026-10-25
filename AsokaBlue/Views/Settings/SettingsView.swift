@@ -21,7 +21,7 @@ struct SettingsView: View {
                                 .font(.system(size: 18, weight: .bold))
                                 .foregroundColor(Theme.textPrimaryLight)
                             
-                            Text("+\(authManager.currentUser?.phone ?? "")")
+                            Text("\(authManager.currentUser?.phone ?? "")")
                                 .font(.system(size: 14))
                                 .foregroundColor(Theme.textSecondaryLight)
                             

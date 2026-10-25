@@ -17,7 +17,10 @@ class AuthManager: ObservableObject {
     }
     
     func checkLoginState() {
-        if let phone = UserDefaults.standard.string(forKey: keyPhone), !phone.isEmpty {
+        if let rawPhone = UserDefaults.standard.string(forKey: keyPhone), !rawPhone.isEmpty {
+            let phone = Self.normalizePhone(rawPhone)
+            UserDefaults.standard.set(phone, forKey: keyPhone)
+            
             let name = UserDefaults.standard.string(forKey: keyName) ?? "Pengguna Asoka"
             let about = UserDefaults.standard.string(forKey: keyAbout) ?? "Ada di Asoka Blue 💬"
             let avatar = UserDefaults.standard.string(forKey: keyAvatar)
@@ -44,11 +47,12 @@ class AuthManager: ObservableObject {
         self.currentUser = User(phone: normalized, name: name, about: about, avatar: avatar, isOnline: true)
         self.isLoggedIn = true
         syncProfileFromServer(phone: normalized)
+        publishUserPresence(phone: normalized, name: name)
     }
     
     func syncProfileFromServer(phone: String) {
         let normalized = Self.normalizePhone(phone)
-        let urlString = "https://asoka-5afdf-default-rtdb.asia-southeast1.firebasedatabase.app/users/\(normalized).json"
+        let urlString = "\(ChatService.firebaseRTDB)/users/\(normalized).json"
         guard let url = URL(string: urlString) else { return }
         
         URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
@@ -62,6 +66,7 @@ class AuthManager: ObservableObject {
                     if let avatar = avatar, !avatar.isEmpty {
                         UserDefaults.standard.set(avatar, forKey: self.keyAvatar)
                         self.currentUser?.avatar = avatar
+                        ChatService.shared.avatarCache[normalized] = avatar
                     }
                     if let name = name, !name.isEmpty {
                         UserDefaults.standard.set(name, forKey: self.keyName)
@@ -76,7 +81,37 @@ class AuthManager: ObservableObject {
         }.resume()
     }
     
+    func publishUserPresence(phone: String, name: String) {
+        let normalized = Self.normalizePhone(phone)
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let payload: [String: Any] = [
+            "name": name,
+            "phone": normalized,
+            "online": true,
+            "lastSeen": now
+        ]
+        
+        let urlString = "\(ChatService.firebaseRTDB)/users/\(normalized).json"
+        guard let url = URL(string: urlString) else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "PATCH"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+        URLSession.shared.dataTask(with: request).resume()
+    }
+    
     func logout() {
+        if let phone = currentUser?.phone {
+            let normalized = Self.normalizePhone(phone)
+            let urlString = "\(ChatService.firebaseRTDB)/users/\(normalized)/online.json"
+            if let url = URL(string: urlString) {
+                var req = URLRequest(url: url)
+                req.httpMethod = "PUT"
+                req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                req.httpBody = "false".data(using: .utf8)
+                URLSession.shared.dataTask(with: req).resume()
+            }
+        }
         UserDefaults.standard.removeObject(forKey: keyPhone)
         UserDefaults.standard.removeObject(forKey: keyName)
         UserDefaults.standard.removeObject(forKey: keyAbout)
@@ -86,14 +121,23 @@ class AuthManager: ObservableObject {
     }
     
     static func normalizePhone(_ rawPhone: String) -> String {
-        let clean = rawPhone.replacingOccurrences(of: "[^0-9]", with: "", options: .regularExpression)
-        if clean.hasPrefix("08") {
-            return "628" + String(clean.dropFirst(2))
-        } else if clean.hasPrefix("8") {
-            return "628" + String(clean.dropFirst(1))
-        } else if clean.hasPrefix("62") {
-            return clean
+        let trimmed = rawPhone.trimmingCharacters(in: .whitespacesAndNewlines)
+        var digits = trimmed.replacingOccurrences(of: "[^0-9]", with: "", options: .regularExpression)
+        if digits.isEmpty { return trimmed }
+
+        if digits.hasPrefix("0062") {
+            digits = String(digits.dropFirst(4))
+        } else if digits.hasPrefix("62") {
+            digits = String(digits.dropFirst(2))
         }
-        return clean
+
+        while digits.hasPrefix("0") {
+            digits = String(digits.dropFirst(1))
+        }
+
+        if !digits.isEmpty {
+            return "0" + digits
+        }
+        return trimmed
     }
 }

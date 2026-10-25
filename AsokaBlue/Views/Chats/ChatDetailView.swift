@@ -97,9 +97,10 @@ struct ChatDetailView: View {
         .toolbar {
             ToolbarItem(placement: .principal) {
                 HStack(spacing: 10) {
+                    let normPeer = AuthManager.normalizePhone(peerPhone)
                     AvatarView(
                         name: peerName,
-                        avatarString: chatService.avatarCache[peerPhone],
+                        avatarString: chatService.avatarCache[normPeer] ?? chatService.avatarCache[peerPhone],
                         size: 36
                     )
                     
@@ -140,8 +141,11 @@ struct ChatDetailView: View {
         }
         .onAppear {
             if let myPhone = authManager.currentUser?.phone {
-                chatService.fetchMessages(myPhone: myPhone, peerPhone: peerPhone)
+                chatService.startMessagePolling(myPhone: myPhone, peerPhone: peerPhone)
             }
+        }
+        .onDisappear {
+            chatService.stopMessagePolling()
         }
         .alert(isPresented: $showingCallAlert) {
             Alert(title: Text("Asoka Blue"), message: Text(callAlertMessage), dismissButton: .default(Text("OK")))

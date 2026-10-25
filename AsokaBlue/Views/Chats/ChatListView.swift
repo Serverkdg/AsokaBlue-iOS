@@ -102,7 +102,9 @@ struct ChatRowView: View {
     var body: some View {
         HStack(spacing: 12) {
             ZStack(alignment: .bottomTrailing) {
-                AvatarView(name: chat.peerName, avatarString: chat.peerAvatar, size: 50)
+                let norm = AuthManager.normalizePhone(chat.peerPhone)
+                let av = chat.peerAvatar ?? ChatService.shared.avatarCache[norm] ?? ChatService.shared.avatarCache[chat.peerPhone]
+                AvatarView(name: chat.peerName, avatarString: av, size: 50)
                 
                 if chat.isOnline {
                     Circle()
@@ -212,15 +214,20 @@ struct NewChatSheetView: View {
             return
         }
         
+        let av = chatService.avatarCache[cleanPhone] ?? chatService.avatarCache[AuthManager.normalizePhone(cleanPhone)]
         chatService.chats.insert(ChatItem(
             peerPhone: cleanPhone,
             peerName: cleanName,
-            peerAvatar: nil,
+            peerAvatar: av,
             lastMessage: "Memulai percakapan baru...",
             lastMessageTimestamp: Int64(Date().timeIntervalSince1970 * 1000),
             unreadCount: 0,
             isOnline: true
         ), at: 0)
+        
+        if av == nil {
+            chatService.fetchUserAvatar(peerPhone: cleanPhone)
+        }
         
         isPresented = false
     }
