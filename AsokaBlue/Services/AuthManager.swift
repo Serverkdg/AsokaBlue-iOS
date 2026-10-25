@@ -56,9 +56,9 @@ class AuthManager: ObservableObject {
     static func normalizePhone(_ rawPhone: String) -> String {
         let clean = rawPhone.replacingOccurrences(of: "[^0-9]", with: "", options: .regularExpression)
         if clean.hasPrefix("08") {
-            return "628" + clean.dropFirst(2)
+            return "628" + String(clean.dropFirst(2))
         } else if clean.hasPrefix("8") {
-            return "628" + clean.dropFirst(1)
+            return "628" + String(clean.dropFirst(1))
         } else if clean.hasPrefix("62") {
             return clean
         }

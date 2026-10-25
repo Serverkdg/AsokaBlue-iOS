@@ -92,7 +92,7 @@ struct LoginView: View {
                         HStack {
                             if isLoading {
                                 ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                    .tint(.white)
                             } else {
                                 Text("Lanjut & Masuk")
                                     .font(.system(size: 16, weight: .semibold))

@@ -36,7 +36,7 @@ jobs:
       - name: Build App for iOS Simulator
         run: |
           mkdir -p build/Release-iphonesimulator
-          xcodebuild clean build \
+          xcodebuild build \
             -project AsokaBlue.xcodeproj \
             -target AsokaBlue \
             -sdk iphonesimulator \

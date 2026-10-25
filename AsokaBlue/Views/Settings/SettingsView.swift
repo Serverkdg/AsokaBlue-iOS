@@ -39,7 +39,7 @@ struct SettingsView: View {
                 // General Settings
                 Section(header: Text("Preferensi")) {
                     NavigationLink(destination: Text("Pengaturan Akun")) {
-                        Label("Akun & Keamanan", systemImage: "person.badge.shield.checkmark.fill")
+                        Label("Akun & Keamanan", systemImage: "lock.shield.fill")
                     }
                     NavigationLink(destination: Text("Pengaturan Notifikasi")) {
                         Label("Pemberitahuan & Bunyi", systemImage: "bell.badge.fill")

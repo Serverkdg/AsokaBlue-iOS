@@ -184,7 +184,7 @@ struct MessageBubbleView: View {
                 .background(
                     LinearGradient(colors: [Theme.primaryBlue, Theme.darkBlue], startPoint: .topLeading, endPoint: .bottomTrailing)
                 )
-                .cornerRadius(16, corners: [.topLeft, .topRight, .bottomLeft])
+                .clipShape(RoundedRectangle(cornerRadius: 16))
                 .shadow(color: Theme.primaryBlue.opacity(0.2), radius: 4, x: 0, y: 2)
             } else {
                 VStack(alignment: .leading, spacing: 3) {
@@ -199,26 +199,10 @@ struct MessageBubbleView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
                 .background(Color.white)
-                .cornerRadius(16, corners: [.topLeft, .topRight, .bottomRight])
+                .clipShape(RoundedRectangle(cornerRadius: 16))
                 .shadow(color: Color.black.opacity(0.04), radius: 4, x: 0, y: 2)
                 Spacer(minLength: 48)
             }
         }
-    }
-}
-
-extension View {
-    func cornerRadius(_ radius: CGFloat, corners: UIRectCorner) -> some View {
-        clipShape(RoundedCorner(radius: radius, corners: corners))
-    }
-}
-
-struct RoundedCorner: Shape {
-    var radius: CGFloat = .infinity
-    var corners: UIRectCorner = .allCorners
-
-    func path(in rect: CGRect) -> Path {
-        let path = UIBezierPath(roundedRect: rect, byRoundingCorners: corners, cornerRadii: CGSize(width: radius, height: radius))
-        return Path(path.cgPath)
     }
 }
