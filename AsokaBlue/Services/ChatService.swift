@@ -149,12 +149,16 @@ class ChatService: ObservableObject {
             guard let usersDict = try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]] else { return }
             
             var items: [ChatItem] = []
+            var seenPhones = Set<String>()
+            
             for (phone, dict) in usersDict {
                 let normPhone = AuthManager.normalizePhone(phone)
                 guard normPhone != myPhone && normPhone.count >= 8 else { continue }
+                guard !seenPhones.contains(normPhone) else { continue }
+                seenPhones.insert(normPhone)
                 
                 let name = dict["name"] as? String ?? normPhone
-                let avatar = dict["avatar"] as? String
+                let avatar = dict["avatar"] as? String ?? self.avatarCache[normPhone]
                 let isOnline = dict["online"] as? Bool ?? false
                 
                 if let avatar = avatar, !avatar.isEmpty {
