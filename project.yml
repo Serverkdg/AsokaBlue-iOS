@@ -1,0 +1,25 @@
+name: AsokaBlue
+options:
+  bundleIdPrefix: com.asoka.blue
+  deploymentTarget:
+    iOS: "16.0"
+  xcodeVersion: "15.0"
+targets:
+  AsokaBlue:
+    type: application
+    platform: iOS
+    sources:
+      - path: AsokaBlue
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.asoka.blue.ios
+        PRODUCT_NAME: "Asoka Blue"
+        INFOPLIST_FILE: AsokaBlue/Info.plist
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.9"
+        GENERATE_INFOPLIST_FILE: false
+        ENABLE_BITCODE: false
+        CODE_SIGNING_ALLOWED: false
+        CODE_SIGNING_REQUIRED: false
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
