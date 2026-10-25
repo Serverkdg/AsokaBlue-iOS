@@ -97,14 +97,11 @@ struct ChatDetailView: View {
         .toolbar {
             ToolbarItem(placement: .principal) {
                 HStack(spacing: 10) {
-                    Circle()
-                        .fill(Theme.primaryBlue.opacity(0.15))
-                        .frame(width: 34, height: 34)
-                        .overlay(
-                            Text(peerName.prefix(1).uppercased())
-                                .font(.system(size: 14, weight: .bold))
-                                .foregroundColor(Theme.primaryBlue)
-                        )
+                    AvatarView(
+                        name: peerName,
+                        avatarString: chatService.avatarCache[peerPhone],
+                        size: 36
+                    )
                     
                     VStack(alignment: .leading, spacing: 1) {
                         Text(peerName)
@@ -116,6 +113,7 @@ struct ChatDetailView: View {
                             .foregroundColor(.green)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             
             ToolbarItem(placement: .navigationBarTrailing) {

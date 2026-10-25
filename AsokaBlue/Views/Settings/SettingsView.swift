@@ -10,14 +10,11 @@ struct SettingsView: View {
                 // Profile Section
                 Section {
                     HStack(spacing: 16) {
-                        Circle()
-                            .fill(LinearGradient(colors: [Theme.primaryBlue, Theme.darkBlue], startPoint: .topLeading, endPoint: .bottomTrailing))
-                            .frame(width: 60, height: 60)
-                            .overlay(
-                                Text(authManager.currentUser?.name.prefix(1).uppercased() ?? "A")
-                                    .font(.system(size: 24, weight: .bold))
-                                    .foregroundColor(.white)
-                            )
+                        AvatarView(
+                            name: authManager.currentUser?.name ?? "A",
+                            avatarString: authManager.currentUser?.avatar,
+                            size: 60
+                        )
                         
                         VStack(alignment: .leading, spacing: 4) {
                             Text(authManager.currentUser?.name ?? "Pengguna Asoka")

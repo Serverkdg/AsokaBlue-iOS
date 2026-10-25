@@ -10,6 +10,8 @@ class ChatService: ObservableObject {
     @Published var activeMessages: [Message] = []
     @Published var isLoading: Bool = false
     
+    @Published var avatarCache: [String: String] = [:]
+    
     private var timer: Timer?
     
     init() {
@@ -19,7 +21,7 @@ class ChatService: ObservableObject {
     func startPolling(for myPhone: String) {
         fetchChats(for: myPhone)
         timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 4.0, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
             self?.fetchChats(for: myPhone)
         }
     }
@@ -44,7 +46,7 @@ class ChatService: ObservableObject {
                         let name = dict["name"] as? String ?? peerPhone
                         let lastMsg = dict["lastMessage"] as? String ?? ""
                         let timestamp = (dict["timestamp"] as? NSNumber)?.int64Value ?? Int64(Date().timeIntervalSince1970 * 1000)
-                        let avatar = dict["avatar"] as? String
+                        let avatar = dict["avatar"] as? String ?? self.avatarCache[peerPhone]
                         let unread = (dict["unread"] as? NSNumber)?.intValue ?? 0
                         
                         items.append(ChatItem(
@@ -56,18 +58,41 @@ class ChatService: ObservableObject {
                             unreadCount: unread,
                             isOnline: false
                         ))
+                        
+                        // Fetch avatar if not present
+                        if avatar == nil || avatar?.isEmpty == true {
+                            self.fetchUserAvatar(peerPhone: peerPhone)
+                        }
                     }
                     
                     items.sort { $0.lastMessageTimestamp > $1.lastMessageTimestamp }
                     
                     DispatchQueue.main.async {
-                        if !items.isEmpty {
+                        if !items.isEmpty && self.chats != items {
                             self.chats = items
                         }
                     }
                 }
             } catch {
                 // Ignore parse errors on empty node
+            }
+        }.resume()
+    }
+    
+    func fetchUserAvatar(peerPhone: String) {
+        guard avatarCache[peerPhone] == nil else { return }
+        let urlString = "\(Self.firebaseRTDB)/users/\(peerPhone)/avatar.json"
+        guard let url = URL(string: urlString) else { return }
+        
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
+            guard let self = self, let data = data, error == nil else { return }
+            if let avatarStr = try? JSONSerialization.jsonObject(with: data) as? String, !avatarStr.isEmpty {
+                DispatchQueue.main.async {
+                    self.avatarCache[peerPhone] = avatarStr
+                    if let idx = self.chats.firstIndex(where: { $0.peerPhone == peerPhone }) {
+                        self.chats[idx].peerAvatar = avatarStr
+                    }
+                }
             }
         }.resume()
     }

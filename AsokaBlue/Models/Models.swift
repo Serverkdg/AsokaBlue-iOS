@@ -46,7 +46,7 @@ struct Message: Identifiable, Codable, Equatable {
     }
 }
 
-struct ChatItem: Identifiable, Codable {
+struct ChatItem: Identifiable, Codable, Equatable {
     var id: String { peerPhone }
     let peerPhone: String
     var peerName: String

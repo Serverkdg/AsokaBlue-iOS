@@ -23,6 +23,7 @@ class AuthManager: ObservableObject {
             let avatar = UserDefaults.standard.string(forKey: keyAvatar)
             self.currentUser = User(phone: phone, name: name, about: about, avatar: avatar, isOnline: true)
             self.isLoggedIn = true
+            syncProfileFromServer(phone: phone)
         } else {
             self.currentUser = nil
             self.isLoggedIn = false
@@ -42,6 +43,37 @@ class AuthManager: ObservableObject {
         
         self.currentUser = User(phone: normalized, name: name, about: about, avatar: avatar, isOnline: true)
         self.isLoggedIn = true
+        syncProfileFromServer(phone: normalized)
+    }
+    
+    func syncProfileFromServer(phone: String) {
+        let normalized = Self.normalizePhone(phone)
+        let urlString = "https://asoka-5afdf-default-rtdb.asia-southeast1.firebasedatabase.app/users/\(normalized).json"
+        guard let url = URL(string: urlString) else { return }
+        
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
+            guard let self = self, let data = data, error == nil else { return }
+            if let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                let name = dict["name"] as? String
+                let avatar = dict["avatar"] as? String
+                let about = dict["about"] as? String
+                
+                DispatchQueue.main.async {
+                    if let avatar = avatar, !avatar.isEmpty {
+                        UserDefaults.standard.set(avatar, forKey: self.keyAvatar)
+                        self.currentUser?.avatar = avatar
+                    }
+                    if let name = name, !name.isEmpty {
+                        UserDefaults.standard.set(name, forKey: self.keyName)
+                        self.currentUser?.name = name
+                    }
+                    if let about = about, !about.isEmpty {
+                        UserDefaults.standard.set(about, forKey: self.keyAbout)
+                        self.currentUser?.about = about
+                    }
+                }
+            }
+        }.resume()
     }
     
     func logout() {

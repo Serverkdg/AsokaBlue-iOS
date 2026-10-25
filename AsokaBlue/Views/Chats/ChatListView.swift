@@ -71,6 +71,7 @@ struct ChatListView: View {
                         }
                     }
                     .listStyle(PlainListStyle())
+                    .transaction { $0.animation = nil }
                 }
             }
             .navigationTitle("Asoka Blue")
@@ -101,14 +102,7 @@ struct ChatRowView: View {
     var body: some View {
         HStack(spacing: 12) {
             ZStack(alignment: .bottomTrailing) {
-                Circle()
-                    .fill(LinearGradient(colors: [Theme.primaryBlue.opacity(0.8), Theme.darkBlue], startPoint: .topLeading, endPoint: .bottomTrailing))
-                    .frame(width: 50, height: 50)
-                    .overlay(
-                        Text(chat.peerName.prefix(1).uppercased())
-                            .font(.system(size: 20, weight: .bold))
-                            .foregroundColor(.white)
-                    )
+                AvatarView(name: chat.peerName, avatarString: chat.peerAvatar, size: 50)
                 
                 if chat.isOnline {
                     Circle()
