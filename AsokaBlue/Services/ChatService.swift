@@ -29,11 +29,10 @@ class ChatService: ObservableObject {
     }
     
     func startPolling(for myPhone: String) {
-        let normMyPhone = AuthManager.normalizePhone(myPhone)
-        fetchChats(for: normMyPhone)
+        fetchChats(for: myPhone)
         chatListTimer?.invalidate()
-        chatListTimer = Timer.scheduledTimer(withTimeInterval: 4.0, repeats: true) { [weak self] _ in
-            self?.fetchChats(for: normMyPhone)
+        chatListTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+            self?.fetchChats(for: myPhone)
         }
     }
     
@@ -46,7 +45,7 @@ class ChatService: ObservableObject {
         currentActivePeer = peerPhone
         fetchMessages(myPhone: myPhone, peerPhone: peerPhone)
         messageDetailTimer?.invalidate()
-        messageDetailTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in
+        messageDetailTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             self?.fetchMessages(myPhone: myPhone, peerPhone: peerPhone)
         }
     }
@@ -120,45 +119,83 @@ class ChatService: ObservableObject {
         }
     }
     
+    static func getAllPhoneVariations(for rawPhone: String) -> [String] {
+        var variations = Set<String>()
+        let norm = AuthManager.normalizePhone(rawPhone)
+        if !norm.isEmpty { variations.insert(norm) }
+        let clean = rawPhone.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !clean.isEmpty { variations.insert(clean) }
+        
+        let digits = clean.replacingOccurrences(of: "[^0-9]", with: "", options: .regularExpression)
+        if !digits.isEmpty {
+            variations.insert(digits)
+            if digits.hasPrefix("0") {
+                let withoutZero = String(digits.dropFirst())
+                variations.insert("62" + withoutZero)
+                variations.insert("+62" + withoutZero)
+                variations.insert(withoutZero)
+            } else if digits.hasPrefix("62") {
+                let without62 = String(digits.dropFirst(2))
+                variations.insert("0" + without62)
+                variations.insert("+62" + without62)
+                variations.insert(without62)
+            }
+        }
+        return Array(variations)
+    }
+    
     func fetchChats(for myPhone: String) {
+        let variations = Self.getAllPhoneVariations(for: myPhone)
+        guard !variations.isEmpty else { return }
+        
         let normMyPhone = AuthManager.normalizePhone(myPhone)
-        guard !normMyPhone.isEmpty else { return }
+        let group = DispatchGroup()
+        let lock = NSLock()
+        var itemsMap: [String: ChatItem] = [:]
         
-        let urlString = "\(Self.firebaseRTDB)/user_chats/\(normMyPhone).json"
-        guard let url = URL(string: urlString) else { return }
-        
-        URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
-            guard let self = self, let data = data, error == nil else { return }
+        for variant in variations {
+            guard let url = URL(string: "\(Self.firebaseRTDB)/user_chats/\(variant).json") else { continue }
+            group.enter()
             
-            var itemsMap: [String: ChatItem] = [:]
-            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]] {
+            URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
+                defer { group.leave() }
+                guard let self = self, let data = data, error == nil else { return }
+                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]] else { return }
+                
                 for (roomId, dict) in json {
-                    let normPeer = self.extractPeerPhone(from: roomId, myPhone: normMyPhone)
-                    guard !normPeer.isEmpty && normPeer != normMyPhone && normPeer.count >= 8 else { continue }
+                    let peerIdentifier = self.extractPeerPhone(from: roomId, myPhone: normMyPhone)
+                    guard !peerIdentifier.isEmpty else { continue }
                     
                     var name = dict["name"] as? String ?? dict["peerName"] as? String ?? ""
                     let isNumeric = name.replacingOccurrences(of: "[^0-9]", with: "", options: .regularExpression) == name
                     
-                    // Prioritas 1: Nama kontak dari buku telepon perangkat (device contacts)
-                    if let deviceName = ContactManager.shared.getContactName(for: normPeer), !deviceName.isEmpty {
-                        name = deviceName
-                    } else if name.isEmpty || isNumeric {
-                        // Prioritas 2: Nama profil terdaftar di Firebase
-                        if let cachedName = self.userNamesCache[normPeer], !cachedName.isEmpty {
-                            name = cachedName
-                        } else if name.isEmpty {
-                            name = normPeer
+                    // Prioritas 1: Asoka AI / Group formatting
+                    if peerIdentifier == "asoka_ai" {
+                        name = "Asoka AI (Asisten Cerdas)"
+                    } else if roomId.hasPrefix("group_") {
+                        if name.isEmpty { name = "Grup Asoka" }
+                    } else {
+                        // Prioritas 2: Nama kontak dari buku telepon perangkat (device contacts)
+                        if let deviceName = ContactManager.shared.getContactName(for: peerIdentifier), !deviceName.isEmpty {
+                            name = deviceName
+                        } else if name.isEmpty || isNumeric {
+                            // Prioritas 3: Nama profil terdaftar di Firebase
+                            if let cachedName = self.userNamesCache[peerIdentifier], !cachedName.isEmpty {
+                                name = cachedName
+                            } else if name.isEmpty {
+                                name = peerIdentifier
+                            }
                         }
                     }
                     
                     let lastMsg = dict["lastMessage"] as? String ?? dict["message"] as? String ?? ""
                     let timestampMs = (dict["timestampMs"] as? NSNumber)?.int64Value ?? Int64(Date().timeIntervalSince1970 * 1000)
-                    let avatar = self.avatarCache[normPeer]
+                    let avatar = self.avatarCache[peerIdentifier]
                     let unread = (dict["unreadCount"] as? NSNumber)?.intValue ?? 0
                     let isOnline = dict["online"] as? Bool ?? false
                     
                     let item = ChatItem(
-                        peerPhone: normPeer,
+                        peerPhone: peerIdentifier,
                         peerName: name,
                         peerAvatar: avatar,
                         lastMessage: lastMsg,
@@ -167,13 +204,14 @@ class ChatService: ObservableObject {
                         isOnline: isOnline
                     )
                     
-                    if let existing = itemsMap[normPeer] {
+                    lock.lock()
+                    if let existing = itemsMap[peerIdentifier] {
                         var merged = item
                         if existing.lastMessageTimestamp > timestampMs {
                             merged.lastMessage = existing.lastMessage
                             merged.lastMessageTimestamp = existing.lastMessageTimestamp
                         }
-                        if let devName = ContactManager.shared.getContactName(for: normPeer), !devName.isEmpty {
+                        if let devName = ContactManager.shared.getContactName(for: peerIdentifier), !devName.isEmpty {
                             merged.peerName = devName
                         } else {
                             let existingNumeric = existing.peerName.replacingOccurrences(of: "[^0-9]", with: "", options: .regularExpression) == existing.peerName
@@ -182,26 +220,27 @@ class ChatService: ObservableObject {
                             }
                         }
                         merged.unreadCount = max(existing.unreadCount, unread)
-                        itemsMap[normPeer] = merged
+                        itemsMap[peerIdentifier] = merged
                     } else {
-                        itemsMap[normPeer] = item
+                        itemsMap[peerIdentifier] = item
                     }
+                    lock.unlock()
                     
-                    if avatar == nil {
-                        self.fetchUserAvatar(peerPhone: normPeer)
+                    if avatar == nil && peerIdentifier != "asoka_ai" && !peerIdentifier.hasPrefix("group_") {
+                        self.fetchUserAvatar(peerPhone: peerIdentifier)
                     }
                 }
-            }
-            
+            }.resume()
+        }
+        
+        group.notify(queue: .main) { [weak self] in
+            guard let self = self else { return }
             var items = Array(itemsMap.values)
             items.sort { $0.lastMessageTimestamp > $1.lastMessageTimestamp }
-            
-            DispatchQueue.main.async {
-                if self.chats != items {
-                    self.chats = items
-                }
+            if self.chats != items {
+                self.chats = items
             }
-        }.resume()
+        }
     }
     
     func fetchUserAvatar(peerPhone: String) {
@@ -230,52 +269,78 @@ class ChatService: ObservableObject {
     func fetchMessages(myPhone: String, peerPhone: String) {
         let normMy = AuthManager.normalizePhone(myPhone)
         let normPeer = AuthManager.normalizePhone(peerPhone)
-        let roomId = Self.getCanonicalRoomId(phone1: normMy, phone2: normPeer)
-        let urlString = "\(Self.firebaseRTDB)/chats/\(roomId)/messages.json"
-        guard let url = URL(string: urlString) else { return }
         
-        URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
-            guard let self = self, let data = data, error == nil else { return }
-            do {
-                if let json = try JSONSerialization.jsonObject(with: data) as? [String: [String: Any]] {
-                    var messages: [Message] = []
-                    for (msgId, dict) in json {
-                        let text = dict["text"] as? String ?? dict["message"] as? String ?? ""
-                        guard !text.isEmpty || dict["imageUrl"] != nil else { continue }
-                        
-                        let senderId = dict["senderId"] as? String ?? dict["sender"] as? String ?? ""
-                        let normSender = AuthManager.normalizePhone(senderId)
-                        let isOutgoing = (normSender == normMy)
-                        
-                        let timestamp = (dict["timestampMs"] as? NSNumber)?.int64Value ?? 0
-                        let typeRaw = dict["type"] as? String ?? "TEXT"
-                        let mediaUrl = dict["imageUrl"] as? String ?? dict["imageStorageUrl"] as? String
-                        let msgType = MessageType(rawValue: typeRaw) ?? .text
-                        
-                        messages.append(Message(
-                            id: msgId,
-                            senderPhone: normSender,
-                            receiverPhone: isOutgoing ? normPeer : normMy,
-                            text: text,
-                            type: msgType,
-                            mediaUrl: mediaUrl,
-                            timestamp: timestamp,
-                            status: .delivered,
-                            isOutgoing: isOutgoing
-                        ))
-                    }
+        let roomCandidates: [String]
+        if peerPhone == "asoka_ai" || peerPhone.contains("asoka_ai") {
+            roomCandidates = ["asoka_ai"]
+        } else if peerPhone.hasPrefix("group_") {
+            roomCandidates = [peerPhone]
+        } else {
+            let sorted = [normMy, normPeer].sorted()
+            let canon = "private_\(sorted[0])_\(sorted[1])"
+            let alt1 = "private_\(normPeer)_\(normMy)"
+            let alt2 = "private_\(normMy)_\(normPeer)"
+            var set = Set<String>()
+            set.insert(canon)
+            set.insert(alt1)
+            set.insert(alt2)
+            roomCandidates = Array(set)
+        }
+        
+        let group = DispatchGroup()
+        let lock = NSLock()
+        var messagesDict: [String: Message] = [:]
+        
+        for roomId in roomCandidates {
+            let urlString = "\(Self.firebaseRTDB)/chats/\(roomId)/messages.json"
+            guard let url = URL(string: urlString) else { continue }
+            group.enter()
+            
+            URLSession.shared.dataTask(with: url) { data, _, error in
+                defer { group.leave() }
+                guard let data = data, error == nil else { return }
+                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]] else { return }
+                
+                for (msgId, dict) in json {
+                    let text = dict["text"] as? String ?? dict["message"] as? String ?? dict["caption"] as? String ?? ""
+                    let mediaUrl = dict["imageUrl"] as? String ?? dict["imageStorageUrl"] as? String ?? dict["videoUrl"] as? String ?? dict["audioUrl"] as? String
+                    guard !text.isEmpty || mediaUrl != nil else { continue }
                     
-                    messages.sort { $0.timestamp < $1.timestamp }
-                    DispatchQueue.main.async {
-                        if self.activeMessages != messages {
-                            self.activeMessages = messages
-                        }
-                    }
+                    let senderId = dict["senderId"] as? String ?? dict["sender"] as? String ?? ""
+                    let normSender = AuthManager.normalizePhone(senderId)
+                    let isOutgoing = (normSender == normMy || senderId == myPhone)
+                    
+                    let timestamp = (dict["timestampMs"] as? NSNumber)?.int64Value ?? Int64(Date().timeIntervalSince1970 * 1000)
+                    let typeRaw = (dict["type"] as? String ?? "TEXT").uppercased()
+                    let msgType = MessageType(rawValue: typeRaw) ?? (mediaUrl != nil ? .image : .text)
+                    
+                    let msg = Message(
+                        id: msgId,
+                        senderPhone: normSender,
+                        receiverPhone: isOutgoing ? normPeer : normMy,
+                        text: text,
+                        type: msgType,
+                        mediaUrl: mediaUrl,
+                        timestamp: timestamp,
+                        status: .delivered,
+                        isOutgoing: isOutgoing
+                    )
+                    
+                    lock.lock()
+                    messagesDict[msgId] = msg
+                    lock.unlock()
                 }
-            } catch {
-                // Ignore empty room parse error
+            }.resume()
+        }
+        
+        group.notify(queue: .main) { [weak self] in
+            guard let self = self else { return }
+            var list = Array(messagesDict.values)
+            list.sort { $0.timestamp < $1.timestamp }
+            if self.activeMessages != list {
+                self.activeMessages = list
             }
-        }.resume()
+        }
     }
     
     func sendMessage(myPhone: String, peerPhone: String, peerName: String, text: String) {
@@ -284,7 +349,15 @@ class ChatService: ObservableObject {
         
         let normMy = AuthManager.normalizePhone(myPhone)
         let normPeer = AuthManager.normalizePhone(peerPhone)
-        let roomId = Self.getCanonicalRoomId(phone1: normMy, phone2: normPeer)
+        
+        let roomId: String
+        if peerPhone == "asoka_ai" || peerPhone.contains("asoka_ai") {
+            roomId = "asoka_ai"
+        } else if peerPhone.hasPrefix("group_") {
+            roomId = peerPhone
+        } else {
+            roomId = Self.getCanonicalRoomId(phone1: normMy, phone2: normPeer)
+        }
         
         let timestampMs = Int64(Date().timeIntervalSince1970 * 1000)
         let msgId = "-P\(timestampMs)_\(Int.random(in: 1000...9999))"
@@ -330,17 +403,7 @@ class ChatService: ObservableObject {
             ), at: 0)
         }
         
-        var seenPhones = Set<String>()
-        chats.removeAll { item in
-            let norm = AuthManager.normalizePhone(item.peerPhone)
-            if seenPhones.contains(norm) {
-                return true
-            }
-            seenPhones.insert(norm)
-            return false
-        }
-        
-        // 1. Post to /chats/{roomId}/messages/{msgId}.json
+        // 1. Post message to Firebase
         let messagePayload: [String: Any] = [
             "id": msgId,
             "text": cleanText,
@@ -366,7 +429,7 @@ class ChatService: ObservableObject {
             URLSession.shared.dataTask(with: request).resume()
         }
         
-        // 2. Update user_chats for sender
+        // 2. Update user_chats for sender across all phone variations
         let senderChatPayload: [String: Any] = [
             "id": roomId,
             "name": peerName,
@@ -378,56 +441,70 @@ class ChatService: ObservableObject {
             "lastMessageId": msgId,
             "unreadCount": 0
         ]
-        let senderChatUrl = "\(Self.firebaseRTDB)/user_chats/\(normMy)/\(roomId).json"
-        if let url = URL(string: senderChatUrl) {
-            var request = URLRequest(url: url)
-            request.httpMethod = "PATCH"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try? JSONSerialization.data(withJSONObject: senderChatPayload)
-            URLSession.shared.dataTask(with: request).resume()
+        
+        for myVar in Self.getAllPhoneVariations(for: myPhone) {
+            let senderChatUrl = "\(Self.firebaseRTDB)/user_chats/\(myVar)/\(roomId).json"
+            if let url = URL(string: senderChatUrl) {
+                var request = URLRequest(url: url)
+                request.httpMethod = "PATCH"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.httpBody = try? JSONSerialization.data(withJSONObject: senderChatPayload)
+                URLSession.shared.dataTask(with: request).resume()
+            }
         }
         
-        // 3. Update user_chats for recipient
-        let recipientChatPayload: [String: Any] = [
-            "id": roomId,
-            "name": myDisplayName,
-            "lastMessage": cleanText,
-            "timestamp": formattedTime,
-            "timestampMs": timestampMs,
-            "isLastOutgoing": false,
-            "lastOutgoing": false,
-            "lastMessageId": msgId
-        ]
-        let recipientChatUrl = "\(Self.firebaseRTDB)/user_chats/\(normPeer)/\(roomId).json"
-        if let url = URL(string: recipientChatUrl) {
-            var request = URLRequest(url: url)
-            request.httpMethod = "PATCH"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try? JSONSerialization.data(withJSONObject: recipientChatPayload)
-            URLSession.shared.dataTask(with: request).resume()
-        }
-        
-        // 4. Send Android wake-up notification
-        let notifPayload: [String: Any] = [
-            "id": msgId,
-            "roomId": roomId,
-            "senderPhone": normMy,
-            "senderName": myDisplayName,
-            "message": cleanText,
-            "timestamp": formattedTime,
-            "timestampMs": timestampMs
-        ]
-        let notifUrl = "\(Self.firebaseRTDB)/notifications/\(normPeer)/\(msgId).json"
-        if let url = URL(string: notifUrl) {
-            var request = URLRequest(url: url)
-            request.httpMethod = "PUT"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try? JSONSerialization.data(withJSONObject: notifPayload)
-            URLSession.shared.dataTask(with: request).resume()
+        // 3. Update user_chats for recipient (if not AI or group)
+        if peerPhone != "asoka_ai" && !peerPhone.hasPrefix("group_") {
+            let recipientChatPayload: [String: Any] = [
+                "id": roomId,
+                "name": myDisplayName,
+                "lastMessage": cleanText,
+                "timestamp": formattedTime,
+                "timestampMs": timestampMs,
+                "isLastOutgoing": false,
+                "lastOutgoing": false,
+                "lastMessageId": msgId
+            ]
+            
+            for peerVar in Self.getAllPhoneVariations(for: peerPhone) {
+                let recipientChatUrl = "\(Self.firebaseRTDB)/user_chats/\(peerVar)/\(roomId).json"
+                if let url = URL(string: recipientChatUrl) {
+                    var request = URLRequest(url: url)
+                    request.httpMethod = "PATCH"
+                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    request.httpBody = try? JSONSerialization.data(withJSONObject: recipientChatPayload)
+                    URLSession.shared.dataTask(with: request).resume()
+                }
+            }
+            
+            // 4. Send Android wake-up notification
+            let notifPayload: [String: Any] = [
+                "id": msgId,
+                "roomId": roomId,
+                "senderPhone": normMy,
+                "senderName": myDisplayName,
+                "message": cleanText,
+                "timestamp": formattedTime,
+                "timestampMs": timestampMs
+            ]
+            let notifUrl = "\(Self.firebaseRTDB)/notifications/\(normPeer)/\(msgId).json"
+            if let url = URL(string: notifUrl) {
+                var request = URLRequest(url: url)
+                request.httpMethod = "PUT"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.httpBody = try? JSONSerialization.data(withJSONObject: notifPayload)
+                URLSession.shared.dataTask(with: request).resume()
+            }
         }
     }
     
     private func extractPeerPhone(from roomId: String, myPhone: String) -> String {
+        if roomId == "asoka_ai" || roomId.contains("asoka_ai") {
+            return "asoka_ai"
+        }
+        if roomId.hasPrefix("group_") {
+            return roomId
+        }
         let normMy = AuthManager.normalizePhone(myPhone)
         if roomId.hasPrefix("private_") {
             let stripped = roomId.replacingOccurrences(of: "private_", with: "")

@@ -13,11 +13,27 @@ struct ChatDetailView: View {
     @State private var callAlertMessage: String = ""
     
     var resolvedPeerName: String {
+        if peerPhone == "asoka_ai" {
+            return "Asoka AI"
+        }
+        if peerPhone.hasPrefix("group_") {
+            return peerName.isEmpty ? "Grup Komunitas" : peerName
+        }
         let normPeer = AuthManager.normalizePhone(peerPhone)
         if let devName = ContactManager.shared.getContactName(for: normPeer), !devName.isEmpty {
             return devName
         }
         return peerName
+    }
+    
+    var statusSubtitle: String {
+        if peerPhone == "asoka_ai" {
+            return "Asisten AI Cerdas"
+        }
+        if peerPhone.hasPrefix("group_") {
+            return "Komunitas"
+        }
+        return "Online"
     }
     
     var body: some View {
@@ -117,9 +133,9 @@ struct ChatDetailView: View {
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundColor(Theme.textPrimaryLight)
                             .lineLimit(1)
-                        Text("Online")
+                        Text(statusSubtitle)
                             .font(.system(size: 11))
-                            .foregroundColor(.green)
+                            .foregroundColor(peerPhone == "asoka_ai" ? Theme.primaryBlue : .green)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -128,7 +144,11 @@ struct ChatDetailView: View {
             ToolbarItem(placement: .navigationBarTrailing) {
                 HStack(spacing: 16) {
                     Button(action: {
-                        callAlertMessage = "Memulai panggilan video HD ke \(resolvedPeerName)..."
+                        if peerPhone == "asoka_ai" {
+                            callAlertMessage = "Asoka AI tidak mendukung panggilan video."
+                        } else {
+                            callAlertMessage = "Memulai panggilan video HD ke \(resolvedPeerName)..."
+                        }
                         showingCallAlert = true
                     }) {
                         Image(systemName: "video.fill")
@@ -137,7 +157,11 @@ struct ChatDetailView: View {
                     }
                     
                     Button(action: {
-                        callAlertMessage = "Memanggil \(resolvedPeerName) via Panggilan Suara..."
+                        if peerPhone == "asoka_ai" {
+                            callAlertMessage = "Asoka AI tidak mendukung panggilan suara."
+                        } else {
+                            callAlertMessage = "Memanggil \(resolvedPeerName) via Panggilan Suara..."
+                        }
                         showingCallAlert = true
                     }) {
                         Image(systemName: "phone.fill")
@@ -175,10 +199,16 @@ struct MessageBubbleView: View {
         HStack {
             if message.isOutgoing {
                 Spacer(minLength: 48)
-                VStack(alignment: .trailing, spacing: 3) {
-                    Text(message.text)
-                        .font(.system(size: 15))
-                        .foregroundColor(.white)
+                VStack(alignment: .trailing, spacing: 4) {
+                    if let media = message.mediaUrl, !media.isEmpty {
+                        renderMedia(media)
+                    }
+                    
+                    if !message.text.isEmpty {
+                        Text(message.text)
+                            .font(.system(size: 15))
+                            .foregroundColor(.white)
+                    }
                     
                     HStack(spacing: 4) {
                         Text(message.formattedTime)
@@ -197,10 +227,16 @@ struct MessageBubbleView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 16))
                 .shadow(color: Theme.primaryBlue.opacity(0.2), radius: 4, x: 0, y: 2)
             } else {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(message.text)
-                        .font(.system(size: 15))
-                        .foregroundColor(Theme.textPrimaryLight)
+                VStack(alignment: .leading, spacing: 4) {
+                    if let media = message.mediaUrl, !media.isEmpty {
+                        renderMedia(media)
+                    }
+                    
+                    if !message.text.isEmpty {
+                        Text(message.text)
+                            .font(.system(size: 15))
+                            .foregroundColor(Theme.textPrimaryLight)
+                    }
                     
                     Text(message.formattedTime)
                         .font(.system(size: 10))
@@ -212,6 +248,29 @@ struct MessageBubbleView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 16))
                 .shadow(color: Color.black.opacity(0.04), radius: 4, x: 0, y: 2)
                 Spacer(minLength: 48)
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private func renderMedia(_ mediaStr: String) -> some View {
+        if mediaStr.hasPrefix("data:image"), let comma = mediaStr.firstIndex(of: ",") {
+            let base64 = String(mediaStr[mediaStr.index(after: comma)...])
+            if let data = Data(base64Encoded: base64, options: .ignoreUnknownCharacters), let uiImg = UIImage(data: data) {
+                Image(uiImage: uiImg)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxHeight: 220)
+                    .cornerRadius(10)
+            }
+        } else if let url = URL(string: mediaStr) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().scaledToFit().frame(maxHeight: 220).cornerRadius(10)
+                default:
+                    Color.gray.opacity(0.2).frame(height: 120).cornerRadius(10)
+                }
             }
         }
     }
