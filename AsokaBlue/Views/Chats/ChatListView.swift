@@ -10,29 +10,16 @@ struct ChatListView: View {
     @State private var newChatName: String = ""
     
     var filteredChats: [ChatItem] {
-        var baseList = chatService.chats
+        let baseList = chatService.chats
         let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !query.isEmpty {
-            baseList = baseList.filter { chat in
-                let norm = AuthManager.normalizePhone(chat.peerPhone)
-                let devName = ContactManager.shared.getContactName(for: norm) ?? ""
-                return chat.peerName.localizedCaseInsensitiveContains(query) ||
-                    devName.localizedCaseInsensitiveContains(query) ||
-                    chat.peerPhone.contains(query) ||
-                    chat.lastMessage.localizedCaseInsensitiveContains(query)
-            }
+        if query.isEmpty {
+            return baseList
         }
-        
-        var unique: [ChatItem] = []
-        var seenPhones = Set<String>()
-        for chat in baseList {
-            let norm = AuthManager.normalizePhone(chat.peerPhone)
-            if !seenPhones.contains(norm) {
-                seenPhones.insert(norm)
-                unique.append(chat)
-            }
+        return baseList.filter { chat in
+            chat.peerName.localizedCaseInsensitiveContains(query) ||
+            chat.peerPhone.contains(query) ||
+            chat.lastMessage.localizedCaseInsensitiveContains(query)
         }
-        return unique
     }
     
     var body: some View {
@@ -78,16 +65,14 @@ struct ChatListView: View {
                 } else {
                     List {
                         ForEach(filteredChats) { chat in
-                            let norm = AuthManager.normalizePhone(chat.peerPhone)
-                            let displayName = ContactManager.shared.getContactName(for: norm) ?? chat.peerName
-                            NavigationLink(destination: ChatDetailView(peerPhone: chat.peerPhone, peerName: displayName)) {
+                            NavigationLink(destination: ChatDetailView(peerPhone: chat.peerPhone, peerName: chat.peerName)) {
                                 ChatRowView(chat: chat)
                             }
                             .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                         }
                     }
                     .listStyle(PlainListStyle())
-                    .transaction { $0.animation = nil }
+                    .animation(nil, value: filteredChats.map { $0.id })
                 }
             }
             .navigationTitle("Asoka Blue")
@@ -116,20 +101,12 @@ struct ChatListView: View {
 struct ChatRowView: View {
     let chat: ChatItem
     
-    var displayName: String {
-        let norm = AuthManager.normalizePhone(chat.peerPhone)
-        if let devName = ContactManager.shared.getContactName(for: norm), !devName.isEmpty {
-            return devName
-        }
-        return chat.peerName
-    }
-    
     var body: some View {
         HStack(spacing: 12) {
             ZStack(alignment: .bottomTrailing) {
                 let norm = AuthManager.normalizePhone(chat.peerPhone)
                 let av = chat.peerAvatar ?? ChatService.shared.avatarCache[norm] ?? ChatService.shared.avatarCache[chat.peerPhone]
-                AvatarView(name: displayName, avatarString: av, size: 50)
+                AvatarView(name: chat.peerName, avatarString: av, size: 50)
                 
                 if chat.isOnline {
                     Circle()
@@ -141,20 +118,22 @@ struct ChatRowView: View {
             
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text(displayName)
+                    Text(chat.peerName)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(Theme.textPrimaryLight)
                         .lineLimit(1)
                     
                     Spacer()
                     
-                    Text(chat.formattedTime)
-                        .font(.system(size: 12))
-                        .foregroundColor(chat.unreadCount > 0 ? Theme.primaryBlue : Theme.textSecondaryLight)
+                    if !chat.formattedTime.isEmpty {
+                        Text(chat.formattedTime)
+                            .font(.system(size: 12))
+                            .foregroundColor(chat.unreadCount > 0 ? Theme.primaryBlue : Theme.textSecondaryLight)
+                    }
                 }
                 
                 HStack {
-                    Text(chat.lastMessage)
+                    Text(chat.lastMessage.isEmpty ? "Percakapan baru" : chat.lastMessage)
                         .font(.system(size: 14))
                         .foregroundColor(Theme.textSecondaryLight)
                         .lineLimit(1)

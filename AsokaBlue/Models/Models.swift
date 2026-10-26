@@ -57,6 +57,7 @@ struct ChatItem: Identifiable, Codable, Equatable {
     var isOnline: Bool
     
     var formattedTime: String {
+        guard lastMessageTimestamp > 0 else { return "" }
         let date = Date(timeIntervalSince1970: TimeInterval(lastMessageTimestamp) / 1000.0)
         let calendar = Calendar.current
         let formatter = DateFormatter()

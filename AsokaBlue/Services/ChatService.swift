@@ -179,9 +179,15 @@ class ChatService: ObservableObject {
                         if let deviceName = ContactManager.shared.getContactName(for: peerIdentifier), !deviceName.isEmpty {
                             name = deviceName
                         } else if name.isEmpty || isNumeric {
-                            // Prioritas 3: Nama profil terdaftar di Firebase
+                            // Prioritas 3: Nama profil terdaftar di Firebase atau existing
                             if let cachedName = self.userNamesCache[peerIdentifier], !cachedName.isEmpty {
                                 name = cachedName
+                            } else if let cachedName = self.userNamesCache[chatKey], !cachedName.isEmpty {
+                                name = cachedName
+                            } else if let existingChat = self.chats.first(where: { $0.peerPhone == peerIdentifier }),
+                                      !existingChat.peerName.isEmpty,
+                                      existingChat.peerName.replacingOccurrences(of: "[^0-9]", with: "", options: .regularExpression) != existingChat.peerName {
+                                name = existingChat.peerName
                             } else if name.isEmpty {
                                 name = peerIdentifier
                             }
@@ -189,8 +195,13 @@ class ChatService: ObservableObject {
                     }
                     
                     let lastMsg = dict["lastMessage"] as? String ?? dict["message"] as? String ?? ""
-                    let timestampMs = (dict["timestampMs"] as? NSNumber)?.int64Value ?? Int64(Date().timeIntervalSince1970 * 1000)
-                    let avatar = self.avatarCache[peerIdentifier]
+                    
+                    // Stabilize timestamp: NEVER generate fluctuating Date() if missing in DB
+                    let dbTimestamp = (dict["timestampMs"] as? NSNumber)?.int64Value ?? 0
+                    let existingChat = self.chats.first(where: { $0.peerPhone == peerIdentifier })
+                    let timestampMs = dbTimestamp > 0 ? dbTimestamp : (existingChat?.lastMessageTimestamp ?? 0)
+                    
+                    let avatar = self.avatarCache[peerIdentifier] ?? existingChat?.peerAvatar
                     let unread = (dict["unreadCount"] as? NSNumber)?.intValue ?? 0
                     let isOnline = dict["online"] as? Bool ?? false
                     
@@ -236,8 +247,26 @@ class ChatService: ObservableObject {
         group.notify(queue: .main) { [weak self] in
             guard let self = self else { return }
             var items = Array(itemsMap.values)
-            items.sort { $0.lastMessageTimestamp > $1.lastMessageTimestamp }
-            if self.chats != items {
+            
+            // Deterministic stable sort: order by timestamp desc, tie-breaker by peerPhone asc
+            items.sort { a, b in
+                if a.lastMessageTimestamp != b.lastMessageTimestamp {
+                    return a.lastMessageTimestamp > b.lastMessageTimestamp
+                }
+                return a.peerPhone < b.peerPhone
+            }
+            
+            let isIdentical = (self.chats.count == items.count) && zip(self.chats, items).allSatisfy { old, new in
+                old.peerPhone == new.peerPhone &&
+                old.peerName == new.peerName &&
+                old.lastMessage == new.lastMessage &&
+                old.lastMessageTimestamp == new.lastMessageTimestamp &&
+                old.unreadCount == new.unreadCount &&
+                old.peerAvatar == new.peerAvatar &&
+                old.isOnline == new.isOnline
+            }
+            
+            if !isIdentical {
                 self.chats = items
             }
         }
