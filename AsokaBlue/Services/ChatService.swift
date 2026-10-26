@@ -89,7 +89,9 @@ class ChatService: ObservableObject {
                     if let av = self.avatarCache[normPeer] ?? self.avatarCache[self.chats[i].peerPhone] {
                         self.chats[i].peerAvatar = av
                     }
-                    if let realName = self.userNamesCache[normPeer], !realName.isEmpty {
+                    if let devName = ContactManager.shared.getContactName(for: normPeer), !devName.isEmpty {
+                        self.chats[i].peerName = devName
+                    } else if let realName = self.userNamesCache[normPeer], !realName.isEmpty {
                         let curDigits = self.chats[i].peerName.replacingOccurrences(of: "[^0-9]", with: "", options: .regularExpression)
                         if curDigits == self.chats[i].peerName || self.chats[i].peerName.isEmpty {
                             self.chats[i].peerName = realName
@@ -98,6 +100,24 @@ class ChatService: ObservableObject {
                 }
             }
         }.resume()
+    }
+    
+    func refreshContactNames() {
+        DispatchQueue.main.async {
+            var updated = false
+            for i in 0..<self.chats.count {
+                let norm = AuthManager.normalizePhone(self.chats[i].peerPhone)
+                if let devName = ContactManager.shared.getContactName(for: norm), !devName.isEmpty {
+                    if self.chats[i].peerName != devName {
+                        self.chats[i].peerName = devName
+                        updated = true
+                    }
+                }
+            }
+            if updated {
+                self.objectWillChange.send()
+            }
+        }
     }
     
     func fetchChats(for myPhone: String) {
@@ -118,7 +138,12 @@ class ChatService: ObservableObject {
                     
                     var name = dict["name"] as? String ?? dict["peerName"] as? String ?? ""
                     let isNumeric = name.replacingOccurrences(of: "[^0-9]", with: "", options: .regularExpression) == name
-                    if name.isEmpty || isNumeric {
+                    
+                    // Prioritas 1: Nama kontak dari buku telepon perangkat (device contacts)
+                    if let deviceName = ContactManager.shared.getContactName(for: normPeer), !deviceName.isEmpty {
+                        name = deviceName
+                    } else if name.isEmpty || isNumeric {
+                        // Prioritas 2: Nama profil terdaftar di Firebase
                         if let cachedName = self.userNamesCache[normPeer], !cachedName.isEmpty {
                             name = cachedName
                         } else if name.isEmpty {
@@ -148,9 +173,13 @@ class ChatService: ObservableObject {
                             merged.lastMessage = existing.lastMessage
                             merged.lastMessageTimestamp = existing.lastMessageTimestamp
                         }
-                        let existingNumeric = existing.peerName.replacingOccurrences(of: "[^0-9]", with: "", options: .regularExpression) == existing.peerName
-                        if !existingNumeric && !existing.peerName.isEmpty {
-                            merged.peerName = existing.peerName
+                        if let devName = ContactManager.shared.getContactName(for: normPeer), !devName.isEmpty {
+                            merged.peerName = devName
+                        } else {
+                            let existingNumeric = existing.peerName.replacingOccurrences(of: "[^0-9]", with: "", options: .regularExpression) == existing.peerName
+                            if !existingNumeric && !existing.peerName.isEmpty {
+                                merged.peerName = existing.peerName
+                            }
                         }
                         merged.unreadCount = max(existing.unreadCount, unread)
                         itemsMap[normPeer] = merged
@@ -164,63 +193,11 @@ class ChatService: ObservableObject {
                 }
             }
             
-            // If user_chats is completely empty, populate with registered contacts so user isn't stuck with empty screen
-            if itemsMap.isEmpty {
-                self.fetchContactsFromUsersNode(myPhone: normMyPhone)
-                return
-            }
-            
             var items = Array(itemsMap.values)
             items.sort { $0.lastMessageTimestamp > $1.lastMessageTimestamp }
             
             DispatchQueue.main.async {
                 if self.chats != items {
-                    self.chats = items
-                }
-            }
-        }.resume()
-    }
-    
-    private func fetchContactsFromUsersNode(myPhone: String) {
-        let urlString = "\(Self.firebaseRTDB)/users.json"
-        guard let url = URL(string: urlString) else { return }
-        
-        URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
-            guard let self = self, let data = data, error == nil else { return }
-            guard let usersDict = try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]] else { return }
-            
-            var items: [ChatItem] = []
-            var seenPhones = Set<String>()
-            
-            for (phone, dict) in usersDict {
-                let normPhone = AuthManager.normalizePhone(phone)
-                guard normPhone != myPhone && normPhone.count >= 8 else { continue }
-                guard !seenPhones.contains(normPhone) else { continue }
-                seenPhones.insert(normPhone)
-                
-                let name = dict["name"] as? String ?? normPhone
-                let avatar = dict["avatar"] as? String ?? self.avatarCache[normPhone]
-                let isOnline = dict["online"] as? Bool ?? false
-                
-                if let avatar = avatar, !avatar.isEmpty {
-                    DispatchQueue.main.async {
-                        self.avatarCache[normPhone] = avatar
-                    }
-                }
-                
-                items.append(ChatItem(
-                    peerPhone: normPhone,
-                    peerName: name,
-                    peerAvatar: avatar,
-                    lastMessage: "Kirim pesan ke \(name)",
-                    lastMessageTimestamp: Int64(Date().timeIntervalSince1970 * 1000),
-                    unreadCount: 0,
-                    isOnline: isOnline
-                ))
-            }
-            
-            DispatchQueue.main.async {
-                if !items.isEmpty && self.chats.isEmpty {
                     self.chats = items
                 }
             }

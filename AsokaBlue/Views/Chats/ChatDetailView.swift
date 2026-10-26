@@ -12,6 +12,14 @@ struct ChatDetailView: View {
     @State private var showingCallAlert: Bool = false
     @State private var callAlertMessage: String = ""
     
+    var resolvedPeerName: String {
+        let normPeer = AuthManager.normalizePhone(peerPhone)
+        if let devName = ContactManager.shared.getContactName(for: normPeer), !devName.isEmpty {
+            return devName
+        }
+        return peerName
+    }
+    
     var body: some View {
         VStack(spacing: 0) {
             // Messages Area
@@ -99,13 +107,13 @@ struct ChatDetailView: View {
                 HStack(spacing: 10) {
                     let normPeer = AuthManager.normalizePhone(peerPhone)
                     AvatarView(
-                        name: peerName,
+                        name: resolvedPeerName,
                         avatarString: chatService.avatarCache[normPeer] ?? chatService.avatarCache[peerPhone],
                         size: 36
                     )
                     
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(peerName)
+                        Text(resolvedPeerName)
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundColor(Theme.textPrimaryLight)
                             .lineLimit(1)
@@ -120,7 +128,7 @@ struct ChatDetailView: View {
             ToolbarItem(placement: .navigationBarTrailing) {
                 HStack(spacing: 16) {
                     Button(action: {
-                        callAlertMessage = "Memulai panggilan video HD ke \(peerName)..."
+                        callAlertMessage = "Memulai panggilan video HD ke \(resolvedPeerName)..."
                         showingCallAlert = true
                     }) {
                         Image(systemName: "video.fill")
@@ -129,7 +137,7 @@ struct ChatDetailView: View {
                     }
                     
                     Button(action: {
-                        callAlertMessage = "Memanggil \(peerName) via Panggilan Suara..."
+                        callAlertMessage = "Memanggil \(resolvedPeerName) via Panggilan Suara..."
                         showingCallAlert = true
                     }) {
                         Image(systemName: "phone.fill")
@@ -156,7 +164,7 @@ struct ChatDetailView: View {
         guard let myPhone = authManager.currentUser?.phone else { return }
         let text = inputText
         inputText = ""
-        chatService.sendMessage(myPhone: myPhone, peerPhone: peerPhone, peerName: peerName, text: text)
+        chatService.sendMessage(myPhone: myPhone, peerPhone: peerPhone, peerName: resolvedPeerName, text: text)
     }
 }
 
