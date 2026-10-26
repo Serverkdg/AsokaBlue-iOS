@@ -10,6 +10,7 @@ class ChatService: ObservableObject {
     @Published var activeMessages: [Message] = []
     @Published var isLoading: Bool = false
     @Published var avatarCache: [String: String] = [:]
+    @Published var userNamesCache: [String: String] = [:]
     
     private var chatListTimer: Timer?
     private var messageDetailTimer: Timer?
@@ -65,21 +66,34 @@ class ChatService: ObservableObject {
             guard let usersDict = try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]] else { return }
             
             var discoveredAvatars: [String: String] = [:]
+            var discoveredNames: [String: String] = [:]
             for (phone, udata) in usersDict {
                 let norm = AuthManager.normalizePhone(phone)
                 if let avatar = udata["avatar"] as? String, !avatar.isEmpty {
                     discoveredAvatars[norm] = avatar
                     discoveredAvatars[phone] = avatar
                 }
+                if let name = udata["name"] as? String, !name.isEmpty {
+                    discoveredNames[norm] = name
+                    discoveredNames[phone] = name
+                }
             }
             
             DispatchQueue.main.async {
                 self.avatarCache.merge(discoveredAvatars) { (_, new) in new }
-                // Update avatar on existing chats
+                self.userNamesCache.merge(discoveredNames) { (_, new) in new }
+                
+                // Update avatar and names on existing chats
                 for i in 0..<self.chats.count {
                     let normPeer = AuthManager.normalizePhone(self.chats[i].peerPhone)
                     if let av = self.avatarCache[normPeer] ?? self.avatarCache[self.chats[i].peerPhone] {
                         self.chats[i].peerAvatar = av
+                    }
+                    if let realName = self.userNamesCache[normPeer], !realName.isEmpty {
+                        let curDigits = self.chats[i].peerName.replacingOccurrences(of: "[^0-9]", with: "", options: .regularExpression)
+                        if curDigits == self.chats[i].peerName || self.chats[i].peerName.isEmpty {
+                            self.chats[i].peerName = realName
+                        }
                     }
                 }
             }
@@ -96,40 +110,67 @@ class ChatService: ObservableObject {
         URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
             guard let self = self, let data = data, error == nil else { return }
             
-            var items: [ChatItem] = []
+            var itemsMap: [String: ChatItem] = [:]
             if let json = try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]] {
                 for (roomId, dict) in json {
-                    let peerPhone = self.extractPeerPhone(from: roomId, myPhone: normMyPhone)
-                    guard !peerPhone.isEmpty && peerPhone != normMyPhone else { continue }
+                    let normPeer = self.extractPeerPhone(from: roomId, myPhone: normMyPhone)
+                    guard !normPeer.isEmpty && normPeer != normMyPhone && normPeer.count >= 8 else { continue }
                     
-                    let name = dict["name"] as? String ?? peerPhone
-                    let lastMsg = dict["lastMessage"] as? String ?? ""
+                    var name = dict["name"] as? String ?? dict["peerName"] as? String ?? ""
+                    let isNumeric = name.replacingOccurrences(of: "[^0-9]", with: "", options: .regularExpression) == name
+                    if name.isEmpty || isNumeric {
+                        if let cachedName = self.userNamesCache[normPeer], !cachedName.isEmpty {
+                            name = cachedName
+                        } else if name.isEmpty {
+                            name = normPeer
+                        }
+                    }
+                    
+                    let lastMsg = dict["lastMessage"] as? String ?? dict["message"] as? String ?? ""
                     let timestampMs = (dict["timestampMs"] as? NSNumber)?.int64Value ?? Int64(Date().timeIntervalSince1970 * 1000)
-                    let avatar = self.avatarCache[peerPhone] ?? self.avatarCache[AuthManager.normalizePhone(peerPhone)]
+                    let avatar = self.avatarCache[normPeer]
                     let unread = (dict["unreadCount"] as? NSNumber)?.intValue ?? 0
+                    let isOnline = dict["online"] as? Bool ?? false
                     
-                    items.append(ChatItem(
-                        peerPhone: peerPhone,
+                    let item = ChatItem(
+                        peerPhone: normPeer,
                         peerName: name,
                         peerAvatar: avatar,
                         lastMessage: lastMsg,
                         lastMessageTimestamp: timestampMs,
                         unreadCount: unread,
-                        isOnline: false
-                    ))
+                        isOnline: isOnline
+                    )
+                    
+                    if let existing = itemsMap[normPeer] {
+                        var merged = item
+                        if existing.lastMessageTimestamp > timestampMs {
+                            merged.lastMessage = existing.lastMessage
+                            merged.lastMessageTimestamp = existing.lastMessageTimestamp
+                        }
+                        let existingNumeric = existing.peerName.replacingOccurrences(of: "[^0-9]", with: "", options: .regularExpression) == existing.peerName
+                        if !existingNumeric && !existing.peerName.isEmpty {
+                            merged.peerName = existing.peerName
+                        }
+                        merged.unreadCount = max(existing.unreadCount, unread)
+                        itemsMap[normPeer] = merged
+                    } else {
+                        itemsMap[normPeer] = item
+                    }
                     
                     if avatar == nil {
-                        self.fetchUserAvatar(peerPhone: peerPhone)
+                        self.fetchUserAvatar(peerPhone: normPeer)
                     }
                 }
             }
             
             // If user_chats is completely empty, populate with registered contacts so user isn't stuck with empty screen
-            if items.isEmpty {
+            if itemsMap.isEmpty {
                 self.fetchContactsFromUsersNode(myPhone: normMyPhone)
                 return
             }
             
+            var items = Array(itemsMap.values)
             items.sort { $0.lastMessageTimestamp > $1.lastMessageTimestamp }
             
             DispatchQueue.main.async {
@@ -295,6 +336,11 @@ class ChatService: ObservableObject {
         if let idx = chats.firstIndex(where: { AuthManager.normalizePhone($0.peerPhone) == normPeer }) {
             chats[idx].lastMessage = cleanText
             chats[idx].lastMessageTimestamp = timestampMs
+            if chats[idx].peerName.isEmpty || chats[idx].peerName == normPeer {
+                chats[idx].peerName = peerName
+            }
+            let updated = chats.remove(at: idx)
+            chats.insert(updated, at: 0)
         } else {
             chats.insert(ChatItem(
                 peerPhone: normPeer,
@@ -305,6 +351,16 @@ class ChatService: ObservableObject {
                 unreadCount: 0,
                 isOnline: true
             ), at: 0)
+        }
+        
+        var seenPhones = Set<String>()
+        chats.removeAll { item in
+            let norm = AuthManager.normalizePhone(item.peerPhone)
+            if seenPhones.contains(norm) {
+                return true
+            }
+            seenPhones.insert(norm)
+            return false
         }
         
         // 1. Post to /chats/{roomId}/messages/{msgId}.json
@@ -395,16 +451,18 @@ class ChatService: ObservableObject {
     }
     
     private func extractPeerPhone(from roomId: String, myPhone: String) -> String {
+        let normMy = AuthManager.normalizePhone(myPhone)
         if roomId.hasPrefix("private_") {
             let stripped = roomId.replacingOccurrences(of: "private_", with: "")
             let parts = stripped.split(separator: "_").map { String($0) }
             for p in parts {
-                if AuthManager.normalizePhone(p) != myPhone {
-                    return p
+                let normP = AuthManager.normalizePhone(p)
+                if normP != normMy {
+                    return normP
                 }
             }
-            return parts.last ?? ""
+            return AuthManager.normalizePhone(parts.last ?? "")
         }
-        return roomId
+        return AuthManager.normalizePhone(roomId)
     }
 }

@@ -10,15 +10,25 @@ struct ChatListView: View {
     @State private var newChatName: String = ""
     
     var filteredChats: [ChatItem] {
-        if searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return chatService.chats
-        } else {
-            return chatService.chats.filter {
+        var baseList = chatService.chats
+        if !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            baseList = baseList.filter {
                 $0.peerName.localizedCaseInsensitiveContains(searchQuery) ||
                 $0.peerPhone.contains(searchQuery) ||
                 $0.lastMessage.localizedCaseInsensitiveContains(searchQuery)
             }
         }
+        
+        var unique: [ChatItem] = []
+        var seenPhones = Set<String>()
+        for chat in baseList {
+            let norm = AuthManager.normalizePhone(chat.peerPhone)
+            if !seenPhones.contains(norm) {
+                seenPhones.insert(norm)
+                unique.append(chat)
+            }
+        }
+        return unique
     }
     
     var body: some View {
@@ -215,6 +225,7 @@ struct NewChatSheetView: View {
         }
         
         let av = chatService.avatarCache[cleanPhone] ?? chatService.avatarCache[AuthManager.normalizePhone(cleanPhone)]
+        chatService.chats.removeAll { AuthManager.normalizePhone($0.peerPhone) == cleanPhone }
         chatService.chats.insert(ChatItem(
             peerPhone: cleanPhone,
             peerName: cleanName,
