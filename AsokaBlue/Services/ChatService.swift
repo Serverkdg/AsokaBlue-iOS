@@ -182,7 +182,7 @@ class ChatService: ObservableObject {
                             // Prioritas 3: Nama profil terdaftar di Firebase atau existing
                             if let cachedName = self.userNamesCache[peerIdentifier], !cachedName.isEmpty {
                                 name = cachedName
-                            } else if let cachedName = self.userNamesCache[chatKey], !cachedName.isEmpty {
+                            } else if let cachedName = self.userNamesCache[AuthManager.normalizePhone(peerIdentifier)], !cachedName.isEmpty {
                                 name = cachedName
                             } else if let existingChat = self.chats.first(where: { $0.peerPhone == peerIdentifier }),
                                       !existingChat.peerName.isEmpty,
